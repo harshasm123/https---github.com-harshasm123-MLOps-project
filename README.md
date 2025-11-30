@@ -110,28 +110,30 @@ This will check for:
 - Git
 - Required AWS service permissions (CloudFormation, S3, Lambda, etc.)
 
-### Step 3: Complete Deployment (All Pipelines)
+### Step 3: Deploy the Platform
+
+**Option A: Full Deployment** (Infrastructure + CI/CD + Data Pipeline)
 
 ```bash
-chmod +x deploy-complete.sh
-./deploy-complete.sh
+chmod +x deploy.sh
+./deploy.sh --full
 ```
 
 This deploys:
 1. ✅ **Main Infrastructure** (Lambda, API Gateway, S3, DynamoDB)
-2. ✅ **CI/CD Pipeline** (CodePipeline, CodeBuild, CodeCommit)
+2. ✅ **CI/CD Pipeline** (Optional - with GitHub integration)
 3. ✅ **Data Pipeline** (Glue, Step Functions, EventBridge)
 4. ✅ **Lambda Functions** (Training, Inference, Registry)
 5. ✅ **Frontend Build** (React production bundle)
 
-### Quick Deployment (Infrastructure Only)
+**Option B: Infrastructure Only** (Simpler, faster)
 
 ```bash
 chmod +x deploy.sh
 ./deploy.sh
 ```
 
-Deploys only the main infrastructure without CI/CD and data pipelines.
+Deploys only the core infrastructure without CI/CD and data pipelines.
 
 ### Manual Deployment
 

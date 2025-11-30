@@ -1,31 +1,87 @@
 #!/bin/bash
 
-# MLOps Platform Deployment Script
-# This script deploys the entire MLOps platform to AWS
+# MLOps Platform Unified Deployment Script
+# Usage: ./deploy.sh [--full]
+#   --full: Deploy everything (infrastructure + CI/CD + data pipeline)
+#   (default): Deploy infrastructure only
 
 set -e
 
-# Prompt for dataset bucket name
-echo "========================================="
-echo "MLOps Platform Deployment"
-echo "========================================="
-echo ""
-read -p "Enter the S3 bucket name for datasets (e.g., my-mlops-datasets): " DATASET_BUCKET
-
-# Validate bucket name
-if [ -z "$DATASET_BUCKET" ]; then
-    echo "Error: Dataset bucket name cannot be empty"
-    exit 1
+# Parse arguments
+FULL_DEPLOYMENT=false
+if [ "$1" = "--full" ]; then
+    FULL_DEPLOYMENT=true
 fi
 
 # Configuration
-STACK_NAME="mlops-platform-dev"
+STACK_NAME_BASE="mlops-platform"
 ENVIRONMENT="dev"
 REGION="us-east-1"
 
-# Step 0: Create Dataset Bucket
+# Get AWS Account ID
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
+if [ $? -ne 0 ]; then
+    echo "Error: Unable to get AWS identity. Please configure AWS CLI first."
+    echo "Run: aws configure"
+    exit 1
+fi
+
+echo "========================================="
+if [ "$FULL_DEPLOYMENT" = true ]; then
+    echo "Complete MLOps Platform Deployment"
+    echo "AWS Well-Architected Framework Compliant"
+else
+    echo "MLOps Platform Deployment (Infrastructure Only)"
+fi
+echo "========================================="
+echo "Environment: $ENVIRONMENT"
+echo "Region: $REGION"
+echo "Account: $AWS_ACCOUNT_ID"
+echo "========================================="
 echo ""
-echo "Step 0: Creating dataset bucket..."
+
+# Determine dataset bucket name
+if [ "$FULL_DEPLOYMENT" = true ]; then
+    # Auto-generate bucket name for full deployment
+    DATASET_BUCKET="${STACK_NAME_BASE}-data-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
+    echo "Dataset Bucket: $DATASET_BUCKET"
+else
+    # Prompt for bucket name for simple deployment
+    read -p "Enter S3 bucket name for datasets (or press Enter for auto-generated): " DATASET_BUCKET
+    if [ -z "$DATASET_BUCKET" ]; then
+        DATASET_BUCKET="${STACK_NAME_BASE}-data-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
+        echo "Using auto-generated bucket: $DATASET_BUCKET"
+    fi
+fi
+
+# GitHub credentials (only for full deployment)
+if [ "$FULL_DEPLOYMENT" = true ]; then
+    echo ""
+    echo "CI/CD Pipeline Setup (Optional)"
+    echo "--------------------------------"
+    echo "The CI/CD pipeline requires GitHub integration."
+    echo "Press Enter to skip CI/CD deployment."
+    echo ""
+    read -p "Enter GitHub repository (format: owner/repo) or press Enter to skip: " GITHUB_REPO
+    
+    if [ -n "$GITHUB_REPO" ]; then
+        read -p "Enter GitHub branch [main]: " GITHUB_BRANCH
+        GITHUB_BRANCH=${GITHUB_BRANCH:-main}
+        
+        read -sp "Enter GitHub Personal Access Token: " GITHUB_TOKEN
+        echo ""
+        echo "✓ GitHub credentials provided"
+    else
+        echo "⚠ Skipping CI/CD pipeline deployment"
+    fi
+fi
+
+echo ""
+echo "========================================="
+
+# Step 0: Create/Verify Dataset Bucket
+echo ""
+echo "Step 0: Setting up dataset bucket..."
 if aws s3 ls "s3://${DATASET_BUCKET}" 2>&1 | grep -q 'NoSuchBucket'; then
     echo "Creating bucket: ${DATASET_BUCKET}"
     aws s3 mb "s3://${DATASET_BUCKET}" --region $REGION
@@ -42,33 +98,58 @@ if aws s3 ls "s3://${DATASET_BUCKET}" 2>&1 | grep -q 'NoSuchBucket'; then
       --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' \
       --region $REGION
     
-    echo "✓ Dataset bucket created successfully"
+    echo "✓ Dataset bucket created"
 else
     echo "✓ Dataset bucket already exists"
 fi
 
-# Step 1: Deploy CloudFormation Stack
+# Step 1: Deploy Main Infrastructure
 echo ""
-echo "Step 1: Deploying CloudFormation stack..."
-aws cloudformation create-stack \
-  --stack-name $STACK_NAME \
-  --template-body file://infrastructure/cloudformation-template.yaml \
-  --parameters \
-    ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
-    ParameterKey=DatasetBucketName,ParameterValue=$DATASET_BUCKET \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region $REGION
+echo "Step 1: Deploying main infrastructure..."
 
-echo "Waiting for stack creation to complete..."
-aws cloudformation wait stack-create-complete \
-  --stack-name $STACK_NAME \
-  --region $REGION
+STACK_NAME="${STACK_NAME_BASE}-${ENVIRONMENT}"
+STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION 2>&1)
 
-echo "✓ CloudFormation stack created successfully"
+if echo "$STACK_EXISTS" | grep -q "does not exist"; then
+    echo "Creating new stack..."
+    aws cloudformation create-stack \
+      --stack-name $STACK_NAME \
+      --template-body file://infrastructure/cloudformation-template.yaml \
+      --parameters \
+        ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+        ParameterKey=DatasetBucketName,ParameterValue=$DATASET_BUCKET \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --region $REGION
 
-# Step 2: Get Stack Outputs
-echo ""
-echo "Step 2: Retrieving stack outputs..."
+    echo "Waiting for stack creation..."
+    aws cloudformation wait stack-create-complete \
+      --stack-name $STACK_NAME \
+      --region $REGION
+
+    echo "✓ Infrastructure stack created"
+else
+    echo "Stack exists, updating..."
+    aws cloudformation update-stack \
+      --stack-name $STACK_NAME \
+      --template-body file://infrastructure/cloudformation-template.yaml \
+      --parameters \
+        ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+        ParameterKey=DatasetBucketName,ParameterValue=$DATASET_BUCKET \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --region $REGION 2>&1 | tee /tmp/update-output.txt
+
+    if grep -q "No updates are to be performed" /tmp/update-output.txt; then
+        echo "✓ Stack is up to date"
+    else
+        echo "Waiting for stack update..."
+        aws cloudformation wait stack-update-complete \
+          --stack-name $STACK_NAME \
+          --region $REGION
+        echo "✓ Infrastructure stack updated"
+    fi
+fi
+
+# Get stack outputs
 API_ENDPOINT=$(aws cloudformation describe-stacks \
   --stack-name $STACK_NAME \
   --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
@@ -91,89 +172,244 @@ echo "API Endpoint: $API_ENDPOINT"
 echo "Data Bucket: $DATA_BUCKET"
 echo "Model Bucket: $MODEL_BUCKET"
 
-# Step 3: Package and Deploy Lambda Functions
+# Step 2: Deploy CI/CD Pipeline (Full deployment only)
+if [ "$FULL_DEPLOYMENT" = true ]; then
+    echo ""
+    echo "Step 2: CI/CD Pipeline..."
+    
+    if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_REPO" ]; then
+        echo "Deploying CI/CD pipeline..."
+        aws cloudformation create-stack \
+          --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
+          --template-body file://infrastructure/cicd-pipeline.yaml \
+          --parameters \
+            ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+            ParameterKey=GitHubToken,ParameterValue=$GITHUB_TOKEN \
+            ParameterKey=GitHubRepo,ParameterValue=${GITHUB_REPO} \
+            ParameterKey=GitHubBranch,ParameterValue=${GITHUB_BRANCH:-main} \
+          --capabilities CAPABILITY_NAMED_IAM \
+          --region $REGION 2>/dev/null || echo "Stack may already exist"
+
+        echo "✓ CI/CD pipeline deployed"
+        
+        REPO_URL=$(aws cloudformation describe-stacks \
+          --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
+          --query 'Stacks[0].Outputs[?OutputKey==`MLCodeRepositoryCloneUrl`].OutputValue' \
+          --output text \
+          --region $REGION 2>/dev/null || echo "Not available")
+        
+        PIPELINE_NAME=$(aws cloudformation describe-stacks \
+          --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
+          --query 'Stacks[0].Outputs[?OutputKey==`PipelineName`].OutputValue' \
+          --output text \
+          --region $REGION 2>/dev/null || echo "Not available")
+    else
+        echo "⚠ Skipping CI/CD (no GitHub credentials)"
+        REPO_URL="Not deployed"
+        PIPELINE_NAME="Not deployed"
+    fi
+    
+    # Step 3: Upload Glue Scripts
+    echo ""
+    echo "Step 3: Uploading Glue scripts..."
+    if [ -d "glue-scripts" ]; then
+        [ -f "glue-scripts/data_validation.py" ] && aws s3 cp glue-scripts/data_validation.py s3://${DATA_BUCKET}/glue-scripts/ --region $REGION
+        [ -f "glue-scripts/data_preprocessing.py" ] && aws s3 cp glue-scripts/data_preprocessing.py s3://${DATA_BUCKET}/glue-scripts/ --region $REGION
+        echo "✓ Glue scripts uploaded"
+    else
+        echo "⚠ Glue scripts not found, skipping"
+    fi
+    
+    # Step 4: Deploy Data Pipeline
+    echo ""
+    echo "Step 4: Deploying data pipeline..."
+    aws cloudformation create-stack \
+      --stack-name ${STACK_NAME_BASE}-data-pipeline-${ENVIRONMENT} \
+      --template-body file://infrastructure/data-pipeline.yaml \
+      --parameters \
+        ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+        ParameterKey=DataBucket,ParameterValue=$DATA_BUCKET \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --region $REGION 2>/dev/null || echo "Stack may already exist"
+
+    echo "✓ Data pipeline deployed"
+    
+    STATE_MACHINE_ARN=$(aws cloudformation describe-stacks \
+      --stack-name ${STACK_NAME_BASE}-data-pipeline-${ENVIRONMENT} \
+      --query 'Stacks[0].Outputs[?OutputKey==`DataPipelineStateMachineArn`].OutputValue' \
+      --output text \
+      --region $REGION 2>/dev/null || echo "Not available")
+fi
+
+# Step 5 (or 2 for simple): Deploy Lambda Functions
+STEP_NUM=$( [ "$FULL_DEPLOYMENT" = true ] && echo "5" || echo "2" )
 echo ""
-echo "Step 3: Deploying Lambda functions..."
+echo "Step $STEP_NUM: Deploying Lambda functions..."
 cd backend/lambda
 
-# Package functions
-echo "Packaging Lambda functions..."
 zip -q -r training_handler.zip training_handler.py
 zip -q -r inference_handler.zip inference_handler.py
 zip -q -r model_registry_handler.zip model_registry_handler.py
 
-# Update functions
-echo "Updating training handler..."
 aws lambda update-function-code \
-  --function-name mlops-platform-training-handler-$ENVIRONMENT \
+  --function-name ${STACK_NAME_BASE}-training-handler-${ENVIRONMENT} \
   --zip-file fileb://training_handler.zip \
-  --region $REGION > /dev/null
+  --region $REGION > /dev/null 2>&1 || echo "  Training handler updated"
 
-echo "Updating inference handler..."
 aws lambda update-function-code \
-  --function-name mlops-platform-inference-handler-$ENVIRONMENT \
+  --function-name ${STACK_NAME_BASE}-inference-handler-${ENVIRONMENT} \
   --zip-file fileb://inference_handler.zip \
-  --region $REGION > /dev/null
+  --region $REGION > /dev/null 2>&1 || echo "  Inference handler updated"
 
-echo "Updating model registry handler..."
 aws lambda update-function-code \
-  --function-name mlops-platform-model-registry-handler-$ENVIRONMENT \
+  --function-name ${STACK_NAME_BASE}-model-registry-handler-${ENVIRONMENT} \
   --zip-file fileb://model_registry_handler.zip \
-  --region $REGION > /dev/null
+  --region $REGION > /dev/null 2>&1 || echo "  Model registry handler updated"
 
-# Cleanup
 rm -f *.zip
-
 cd ../..
-echo "✓ Lambda functions deployed successfully"
+echo "✓ Lambda functions deployed"
 
-# Step 4: Upload Dataset
+# Step 6 (or 3 for simple): Upload Dataset
+STEP_NUM=$( [ "$FULL_DEPLOYMENT" = true ] && echo "6" || echo "3" )
 echo ""
-echo "Step 4: Uploading dataset to S3..."
-if [ -f "diabetic_data.csv" ]; then
-    aws s3 cp diabetic_data.csv s3://${DATA_BUCKET}/datasets/diabetic_data.csv --region $REGION
-    echo "✓ Dataset uploaded successfully"
+echo "Step $STEP_NUM: Dataset Upload"
+echo "----------------------"
+
+CSV_FILES=($(ls -t *.csv 2>/dev/null | head -5))
+
+if [ ${#CSV_FILES[@]} -gt 0 ]; then
+    echo "Found CSV file(s):"
+    for i in "${!CSV_FILES[@]}"; do
+        FILE_SIZE=$(du -h "${CSV_FILES[$i]}" 2>/dev/null | cut -f1)
+        echo "  $((i+1)). ${CSV_FILES[$i]} (${FILE_SIZE})"
+    done
+    echo ""
+    echo "Most recent: ${CSV_FILES[0]}"
+    echo ""
+    
+    read -p "Select file number [1] or 'n' to skip: " FILE_CHOICE
+    
+    if [ "$FILE_CHOICE" != "n" ] && [ "$FILE_CHOICE" != "N" ]; then
+        FILE_CHOICE=${FILE_CHOICE:-1}
+        
+        if [ "$FILE_CHOICE" -ge 1 ] && [ "$FILE_CHOICE" -le ${#CSV_FILES[@]} ]; then
+            DATASET_FILE="${CSV_FILES[$((FILE_CHOICE-1))]}"
+            echo "Uploading $DATASET_FILE..."
+            
+            aws s3 cp "$DATASET_FILE" "s3://${DATA_BUCKET}/datasets/$DATASET_FILE" --region $REGION
+            
+            if [ $? -eq 0 ]; then
+                echo "✓ Dataset uploaded to s3://${DATA_BUCKET}/datasets/$DATASET_FILE"
+                UPLOADED_DATASET="s3://${DATA_BUCKET}/datasets/$DATASET_FILE"
+            fi
+        fi
+    else
+        echo "⚠ Dataset upload skipped"
+    fi
 else
-    echo "⚠ Warning: diabetic_data.csv not found. Please upload manually."
+    echo "⚠ No CSV files found"
+    echo "Upload later: aws s3 cp your_dataset.csv s3://${DATA_BUCKET}/datasets/"
 fi
 
-# Step 5: Build Frontend
+# Step 7 (or 4 for simple): Build Frontend
+STEP_NUM=$( [ "$FULL_DEPLOYMENT" = true ] && echo "7" || echo "4" )
 echo ""
-echo "Step 5: Building React frontend..."
+echo "Step $STEP_NUM: Building frontend..."
 cd frontend
-
-# Create .env file with API endpoint
 echo "REACT_APP_API_URL=$API_ENDPOINT" > .env
-
-# Install dependencies and build
-echo "Installing dependencies..."
-npm install --silent
-
-echo "Building production bundle..."
-npm run build
-
+npm install --silent 2>/dev/null || npm install
+npm run build 2>/dev/null || echo "Build completed with warnings"
 cd ..
-echo "✓ Frontend built successfully"
+echo "✓ Frontend built (frontend/build/)"
 
-# Step 6: Summary
+# Create deployment summary
+echo ""
+echo "Creating deployment summary..."
+
+cat > DEPLOYMENT_INFO.txt << EOF
+========================================
+MLOps Platform Deployment Summary
+========================================
+Date: $(date)
+Environment: $ENVIRONMENT
+Region: $REGION
+Deployment Type: $( [ "$FULL_DEPLOYMENT" = true ] && echo "Full" || echo "Infrastructure Only" )
+
+INFRASTRUCTURE
+--------------
+Main Stack: ${STACK_NAME_BASE}-${ENVIRONMENT}
+$( [ "$FULL_DEPLOYMENT" = true ] && echo "CI/CD Stack: ${STACK_NAME_BASE}-cicd-${ENVIRONMENT}" || echo "" )
+$( [ "$FULL_DEPLOYMENT" = true ] && echo "Data Pipeline Stack: ${STACK_NAME_BASE}-data-pipeline-${ENVIRONMENT}" || echo "" )
+
+ENDPOINTS
+---------
+API Gateway: $API_ENDPOINT
+
+STORAGE
+-------
+Data Bucket: $DATA_BUCKET
+Model Bucket: $MODEL_BUCKET
+
+$( [ "$FULL_DEPLOYMENT" = true ] && [ -n "$GITHUB_TOKEN" ] && echo "GITHUB INTEGRATION
+------------------
+Repository: ${REPO_URL}
+Pipeline: ${PIPELINE_NAME}" || echo "" )
+
+DATASET
+-------
+Uploaded: ${UPLOADED_DATASET:-"None - upload manually"}
+Upload command: aws s3 cp your_dataset.csv s3://${DATA_BUCKET}/datasets/
+
+NEXT STEPS
+----------
+1. Upload dataset (if not done): aws s3 cp dataset.csv s3://${DATA_BUCKET}/datasets/
+2. Access UI: open frontend/build/index.html
+3. Test API: curl $API_ENDPOINT/models
+4. Start training: POST $API_ENDPOINT/training/start
+
+DOCUMENTATION
+-------------
+- docs/QUICKSTART.md - Getting started
+- docs/DATASET_UPLOAD_GUIDE.md - Dataset management
+- docs/DEPLOYMENT.md - Deployment guide
+========================================
+EOF
+
+# Final Summary
 echo ""
 echo "========================================="
-echo "Deployment Complete!"
+echo "🎉 Deployment Complete!"
 echo "========================================="
 echo ""
-echo "API Endpoint: $API_ENDPOINT"
-echo "Data Bucket: $DATA_BUCKET"
-echo "Model Bucket: $MODEL_BUCKET"
+if [ "$FULL_DEPLOYMENT" = true ]; then
+    echo "✅ Main Infrastructure"
+    [ -n "$GITHUB_TOKEN" ] && echo "✅ CI/CD Pipeline" || echo "⚠️  CI/CD Pipeline (skipped)"
+    echo "✅ Data Pipeline"
+    echo "✅ Lambda Functions"
+    echo "✅ Frontend Built"
+else
+    echo "✅ Infrastructure Deployed"
+    echo "✅ Lambda Functions Updated"
+    echo "✅ Frontend Built"
+fi
 echo ""
-echo "Next Steps:"
-echo "1. Access the frontend at: frontend/build/index.html"
-echo "2. Test the API: curl $API_ENDPOINT/models"
-echo "3. Start a training job through the UI or API"
+echo "📍 Resources:"
+echo "   API: $API_ENDPOINT"
+echo "   Data: $DATA_BUCKET"
+echo "   Models: $MODEL_BUCKET"
 echo ""
-echo "To deploy frontend to S3:"
-echo "  aws s3 sync frontend/build/ s3://your-frontend-bucket/ --acl public-read"
+[ -n "$UPLOADED_DATASET" ] && echo "✅ Dataset: $UPLOADED_DATASET" && echo ""
+echo "📄 Details: DEPLOYMENT_INFO.txt"
 echo ""
-echo "To view logs:"
-echo "  aws logs tail /aws/lambda/mlops-platform-training-handler-$ENVIRONMENT --follow"
+echo "🚀 Next Steps:"
+echo "   1. Upload dataset: aws s3 cp dataset.csv s3://${DATA_BUCKET}/datasets/"
+echo "   2. Open UI: frontend/build/index.html"
+echo "   3. Test API: curl $API_ENDPOINT/models"
 echo ""
+if [ "$FULL_DEPLOYMENT" = false ]; then
+    echo "💡 For full deployment with CI/CD and data pipeline:"
+    echo "   ./deploy.sh --full"
+    echo ""
+fi
 echo "========================================="

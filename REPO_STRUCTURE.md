@@ -7,6 +7,7 @@ This document describes the organization of the MLOps Platform repository.
 ### Deployment Scripts
 - **deploy-complete.sh** - Full platform deployment (infrastructure + CI/CD + data pipeline)
 - **deploy.sh** - Infrastructure-only deployment (simpler, no CI/CD)
+- **deploy.sh** - Unified deployment script (use `--full` flag for complete deployment)
 - **setup-iam.sh** - IAM permissions setup (use `--quick` flag for fast setup)
 - **prereq.sh** - Prerequisites checker (verifies AWS CLI, Python, Node.js, etc.)
 - **ec2-setup.sh** - EC2-specific setup script
@@ -17,13 +18,17 @@ This document describes the organization of the MLOps Platform repository.
 - **.gitignore** - Git ignore rules
 
 ### Data Files
-- **diabetic_data.csv** - Sample training dataset
+- **diabetic_data.csv** - Original sample training dataset
+- **medication_adherence_sample.csv** - New sample dataset (50 patients)
+- **DEMO20Q4.txt**, **INDI20Q4.txt**, **OUTC20Q4.txt** - Additional data files
 - **DEMO20Q4.txt** - Demo data file
 - **INDI20Q4.txt** - Indicator data file
 - **OUTC20Q4.txt** - Outcome data file
 
 ### Documentation
 - **README.md** - Main project documentation
+- **REPO_STRUCTURE.md** - This file - repository organization guide
+- **REPOSITORY_CLEANUP_FINAL.md** - Cleanup summary and migration guide
 - **DEPLOYMENT_QUICK_REFERENCE.md** - Quick deployment commands reference
 
 ## Directory Structure
