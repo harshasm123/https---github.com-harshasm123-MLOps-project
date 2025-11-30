@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # EC2 Basic Setup Script
-# This script installs only essential tools: git, unzip, wget, curl, AWS CLI
+# This script installs essential tools: git, unzip, wget, curl, Python, pip, AWS CLI
 # For full development environment setup, use prereq.sh after this
 
 set -e
@@ -17,11 +17,36 @@ if [ -f /etc/os-release ]; then
     OS=$ID
     VERSION=$VERSION_ID
 else
-    echo "Cannot detect OS. Exiting."
+    echo "✗ Cannot detect OS. /etc/os-release file not found."
+    echo "   Troubleshooting:"
+    echo "   - Ensure you are running on a supported Linux distribution"
+    echo "   - Supported: Amazon Linux, Ubuntu, Debian, RHEL, CentOS"
     exit 1
 fi
 
 echo "Detected OS: $OS $VERSION"
+
+# Validate OS is supported
+SUPPORTED_OS=("amzn" "ubuntu" "debian" "rhel" "centos")
+OS_SUPPORTED=false
+for supported in "${SUPPORTED_OS[@]}"; do
+    if [ "$OS" = "$supported" ]; then
+        OS_SUPPORTED=true
+        break
+    fi
+done
+
+if [ "$OS_SUPPORTED" = false ]; then
+    echo "✗ Unsupported OS: $OS"
+    echo "   This script supports: Amazon Linux, Ubuntu, Debian, RHEL, CentOS"
+    echo "   Troubleshooting:"
+    echo "   - Use a supported Linux distribution"
+    echo "   - For other distributions, install tools manually:"
+    echo "     git, unzip, wget, curl, python3, python3-pip, AWS CLI"
+    exit 1
+fi
+
+echo "✓ OS is supported"
 echo ""
 
 # Check available disk space
@@ -68,9 +93,22 @@ elif [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
 fi
 echo "✓ Essential tools installed"
 
+# Install Python and pip
+echo ""
+echo "Step 2: Installing Python and pip..."
+if [ "$OS" = "amzn" ] || [ "$OS" = "rhel" ] || [ "$OS" = "centos" ]; then
+    sudo yum install -y python3 python3-pip
+elif [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
+    sudo apt-get install -y python3 python3-pip
+    # Clean up apt cache to free space
+    sudo apt-get clean
+    sudo apt-get autoremove -y
+fi
+echo "✓ Python and pip installed"
+
 # Verify installations
 echo ""
-echo "Step 2: Verifying installations..."
+echo "Step 3: Verifying installations..."
 if command -v git &> /dev/null; then
     echo "✓ Git installed ($(git --version))"
 else
@@ -99,9 +137,25 @@ else
     exit 1
 fi
 
+if command -v python3 &> /dev/null; then
+    PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
+    echo "✓ Python installed (version $PYTHON_VERSION)"
+else
+    echo "✗ Python installation failed"
+    exit 1
+fi
+
+if command -v pip3 &> /dev/null; then
+    PIP_VERSION=$(pip3 --version 2>&1 | cut -d' ' -f2)
+    echo "✓ pip installed (version $PIP_VERSION)"
+else
+    echo "✗ pip installation failed"
+    exit 1
+fi
+
 # Install AWS CLI
 echo ""
-echo "Step 3: Installing AWS CLI..."
+echo "Step 4: Installing AWS CLI..."
 if ! command -v aws &> /dev/null; then
     curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
     unzip -q awscliv2.zip
@@ -123,6 +177,8 @@ echo "  ✓ Git $(git --version | cut -d' ' -f3)"
 echo "  ✓ unzip"
 echo "  ✓ wget"
 echo "  ✓ curl"
+echo "  ✓ Python $(python3 --version 2>&1 | cut -d' ' -f2)"
+echo "  ✓ pip $(pip3 --version 2>&1 | cut -d' ' -f2)"
 echo "  ✓ AWS CLI $(aws --version 2>&1 | cut -d' ' -f1)"
 echo ""
 echo "Next Steps:"

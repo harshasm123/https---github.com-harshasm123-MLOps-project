@@ -3,15 +3,28 @@
 # Prerequisites Checker and Setup Script for MLOps Platform
 # This script checks and installs all required dependencies for local development
 # For EC2 setup, use ec2-setup.sh instead
+#
+# Usage: ./prereq.sh [--install]
+#   --install: Automatically install missing dependencies
 
 set -e
+
+# Parse arguments
+AUTO_INSTALL=false
+if [ "$1" = "--install" ]; then
+    AUTO_INSTALL=true
+fi
 
 echo "========================================="
 echo "MLOps Platform - Prerequisites Setup"
 echo "========================================="
 echo ""
-echo "This script will check and install all required dependencies"
-echo "for local development and deployment."
+if [ "$AUTO_INSTALL" = true ]; then
+    echo "Auto-install mode: Will install missing dependencies"
+else
+    echo "Check mode: Will only check for dependencies"
+    echo "Run with --install flag to auto-install missing items"
+fi
 echo ""
 
 # Color codes for output
@@ -104,9 +117,11 @@ fi
 # Check Node.js (for frontend)
 echo ""
 echo "5. Checking Node.js..."
+NODE_INSTALLED=false
 if command_exists node; then
     NODE_VERSION=$(node --version)
     print_status 0 "Node.js installed ($NODE_VERSION)"
+    NODE_INSTALLED=true
     
     # Check if version is 18+
     NODE_MAJOR=$(echo $NODE_VERSION | cut -d'.' -f1 | sed 's/v//')
@@ -114,12 +129,65 @@ if command_exists node; then
         print_status 0 "Node.js version is 18+ (required)"
     else
         print_warning "Node.js 18+ recommended (you have $NODE_VERSION)"
+        if [ "$AUTO_INSTALL" = true ]; then
+            echo "   Upgrading to Node.js 20.x LTS..."
+            NODE_INSTALLED=false
+        fi
     fi
-else
-    print_status 1 "Node.js not found"
-    echo "   Install: https://nodejs.org/"
-    echo "   Or run: brew install node (macOS)"
-    exit 1
+fi
+
+if [ "$NODE_INSTALLED" = false ]; then
+    if [ "$AUTO_INSTALL" = true ]; then
+        echo "   Installing Node.js 20.x LTS..."
+        
+        # Detect OS
+        if [ -f /etc/os-release ]; then
+            . /etc/os-release
+            OS_ID=$ID
+        fi
+        
+        if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+            # Ubuntu/Debian
+            echo "   Detected Ubuntu/Debian - installing via NodeSource..."
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >/dev/null 2>&1
+            sudo apt-get install -y nodejs >/dev/null 2>&1
+            print_status $? "Node.js 20.x installed"
+        elif [ "$OS_ID" = "amzn" ] || [ "$OS_ID" = "rhel" ] || [ "$OS_ID" = "centos" ]; then
+            # Amazon Linux / RHEL / CentOS
+            echo "   Detected Amazon Linux/RHEL - installing via NodeSource..."
+            curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - >/dev/null 2>&1
+            sudo yum install -y nodejs >/dev/null 2>&1
+            print_status $? "Node.js 20.x installed"
+        elif command_exists brew; then
+            # macOS with Homebrew
+            echo "   Detected macOS - installing via Homebrew..."
+            brew install node@20 >/dev/null 2>&1
+            print_status $? "Node.js 20.x installed"
+        else
+            print_warning "Could not auto-install Node.js on this system"
+            echo "   Please install manually: https://nodejs.org/"
+            echo "   Recommended: Node.js 20.x LTS"
+            exit 1
+        fi
+        
+        # Verify installation
+        if command_exists node; then
+            NODE_VERSION=$(node --version)
+            print_status 0 "Verified: Node.js $NODE_VERSION"
+        else
+            print_status 1 "Node.js installation failed"
+            exit 1
+        fi
+    else
+        print_status 1 "Node.js not found"
+        echo "   Install: https://nodejs.org/ (Recommended: Node.js 20.x LTS)"
+        echo "   Ubuntu/Debian: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs"
+        echo "   Amazon Linux: curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - && sudo yum install -y nodejs"
+        echo "   macOS: brew install node@20"
+        echo ""
+        echo "   Or run this script with --install flag: ./prereq.sh --install"
+        exit 1
+    fi
 fi
 
 # Check npm
@@ -180,14 +248,47 @@ if [ -f "requirements.txt" ]; then
         OS_VERSION=$VERSION_ID
     fi
     
+    # Add ~/.local/bin to PATH before installation to suppress warnings
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+    
     # Handle Ubuntu/Debian PEP 668 restriction
     if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
         echo "   Detected Ubuntu/Debian - using --break-system-packages flag"
-        pip3 install --break-system-packages -r requirements.txt --quiet
-        print_status $? "Python dependencies installed (with --break-system-packages)"
+        pip3 install --break-system-packages -r requirements.txt --quiet 2>&1 | grep -E "^(ERROR|Successfully)" || true
+        print_status 0 "Python dependencies installed (with --break-system-packages)"
     else
-        pip3 install -r requirements.txt --quiet
-        print_status $? "Python dependencies installed"
+        pip3 install -r requirements.txt --quiet 2>&1 | grep -E "^(ERROR|Successfully)" || true
+        print_status 0 "Python dependencies installed"
+    fi
+    
+    # Persist PATH configuration if not already in shell config
+    PATH_CONFIGURED=false
+    for config_file in ~/.bashrc ~/.bash_profile ~/.profile ~/.zshrc; do
+        if [ -f "$config_file" ] && grep -q "/.local/bin" "$config_file" 2>/dev/null; then
+            PATH_CONFIGURED=true
+            break
+        fi
+    done
+    
+    if [ "$PATH_CONFIGURED" = false ]; then
+        echo "   Configuring PATH for Python scripts..."
+        # Add to bashrc (most common)
+        if [ -f ~/.bashrc ]; then
+            echo '' >> ~/.bashrc
+            echo '# Added by MLOps prereq.sh - Python user scripts' >> ~/.bashrc
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+            print_status 0 "PATH configured in ~/.bashrc (restart shell or run: source ~/.bashrc)"
+        fi
+        # Also add to profile for login shells
+        if [ -f ~/.profile ]; then
+            echo '' >> ~/.profile
+            echo '# Added by MLOps prereq.sh - Python user scripts' >> ~/.profile
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
+        fi
+    else
+        print_status 0 "PATH already configured for Python scripts"
     fi
 else
     print_warning "requirements.txt not found, skipping Python dependencies"
@@ -256,15 +357,18 @@ fi
 
 echo ""
 echo "Next Steps:"
-echo "1. Review AWS_WELL_ARCHITECTED.md for architecture details"
-echo "2. Review GITOPS_GUIDE.md for deployment with GitHub"
-echo "3. Run: ./deploy-complete.sh (to deploy everything)"
-echo "   Or: ./deploy.sh (to deploy infrastructure only)"
+echo "1. Setup IAM permissions: ./setup-iam.sh --quick"
+echo "2. Deploy platform:"
+echo "   - Infrastructure only: ./deploy.sh"
+echo "   - Full deployment: ./deploy.sh --full"
 echo ""
-echo "For GitHub deployment:"
-echo "1. Create GitHub repository"
-echo "2. Set GitHub Secrets (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)"
-echo "3. Push code to GitHub"
-echo "4. GitHub Actions will deploy automatically"
+echo "Documentation:"
+echo "- docs/QUICKSTART.md - Getting started guide"
+echo "- docs/DEPLOYMENT.md - Deployment guide"
+echo "- docs/IAM_SETUP_GUIDE.md - IAM permissions"
 echo ""
+if [ "$AUTO_INSTALL" = false ]; then
+    echo "Tip: Run './prereq.sh --install' to auto-install missing dependencies"
+    echo ""
+fi
 echo "========================================="

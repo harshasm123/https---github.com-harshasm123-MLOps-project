@@ -6,13 +6,15 @@ This project includes two setup scripts with different purposes:
 
 ## 1. `ec2-setup.sh` - Basic EC2 Setup
 
-**Purpose:** Install only essential tools on a fresh EC2 instance
+**Purpose:** Install essential tools on a fresh EC2 instance
 
 **What it installs:**
 - ✅ Git
 - ✅ unzip
 - ✅ wget
 - ✅ curl
+- ✅ Python 3.9+
+- ✅ pip3
 - ✅ AWS CLI
 
 **When to use:**
@@ -27,11 +29,18 @@ chmod +x ec2-setup.sh
 ./ec2-setup.sh
 ```
 
+**Features:**
+- ✅ Idempotent - safe to run multiple times
+- ✅ Multi-OS support (Amazon Linux, Ubuntu, Debian, RHEL, CentOS)
+- ✅ Automatic disk space checking
+- ✅ Comprehensive error handling
+- ✅ Version verification for all tools
+
 **What it does NOT install:**
-- Python packages
 - Node.js
 - Docker
-- Project dependencies
+- Project-specific Python packages
+- Development dependencies
 
 ## 2. `prereq.sh` - Full Prerequisites Setup
 
@@ -110,17 +119,20 @@ chmod +x prereq.sh
 
 | Feature | ec2-setup.sh | prereq.sh |
 |---------|--------------|-----------|
-| **Purpose** | Basic tools only | Full dev environment |
+| **Purpose** | Essential tools | Full dev environment |
 | **Git** | ✅ Installs | ✅ Checks |
 | **AWS CLI** | ✅ Installs | ✅ Checks |
-| **Python** | ❌ | ✅ Checks & installs deps |
+| **Python 3.9+** | ✅ Installs | ✅ Checks & installs deps |
+| **pip3** | ✅ Installs | ✅ Checks |
 | **Node.js** | ❌ | ✅ Checks |
 | **Docker** | ❌ | ✅ Checks (optional) |
 | **AWS Credentials** | ❌ | ✅ Verifies |
 | **AWS Permissions** | ❌ | ✅ Checks |
 | **Project Dependencies** | ❌ | ✅ Installs |
-| **Run Time** | ~2-3 minutes | ~5-10 minutes |
-| **Disk Space** | ~500MB | ~2-3GB |
+| **Idempotent** | ✅ Yes | ✅ Yes |
+| **Multi-OS Support** | ✅ Yes | ✅ Yes |
+| **Run Time** | ~3-5 minutes | ~5-10 minutes |
+| **Disk Space** | ~700MB | ~2-3GB |
 
 ## Troubleshooting
 
@@ -141,6 +153,36 @@ df -h
 # Clean up if needed
 sudo apt-get clean
 sudo apt-get autoremove -y
+```
+
+**Problem:** "pip not found" (Should not occur with updated script)
+```bash
+# If pip is missing after running ec2-setup.sh:
+sudo apt-get install -y python3-pip  # Ubuntu/Debian
+sudo yum install -y python3-pip      # Amazon Linux/RHEL
+
+# Or use ensurepip
+python3 -m ensurepip
+```
+
+**Problem:** "Python installation failed"
+```bash
+# Verify Python is available in repositories
+apt-cache search python3  # Ubuntu/Debian
+yum search python3        # Amazon Linux/RHEL
+
+# Install manually if needed
+sudo apt-get install -y python3 python3-pip  # Ubuntu/Debian
+sudo yum install -y python3 python3-pip      # Amazon Linux/RHEL
+```
+
+**Problem:** "Unsupported OS"
+```bash
+# The script supports: Amazon Linux, Ubuntu, Debian, RHEL, CentOS
+# For other distributions, install tools manually:
+# - git, unzip, wget, curl
+# - python3 (3.9+), python3-pip
+# - AWS CLI v2
 ```
 
 ### prereq.sh Issues
