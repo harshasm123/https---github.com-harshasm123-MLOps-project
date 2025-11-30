@@ -22,6 +22,29 @@ echo "Environment: $ENVIRONMENT"
 echo "Region: $REGION"
 echo "Dataset Bucket: $DATASET_BUCKET_NAME"
 echo "========================================="
+echo ""
+
+# Prompt for GitHub credentials for CI/CD (optional)
+echo "CI/CD Pipeline Setup (Optional)"
+echo "--------------------------------"
+echo "The CI/CD pipeline requires GitHub integration."
+echo "If you want to skip CI/CD deployment, just press Enter."
+echo ""
+read -p "Enter GitHub repository (format: owner/repo) or press Enter to skip: " GITHUB_REPO
+
+if [ -n "$GITHUB_REPO" ]; then
+    read -p "Enter GitHub branch [main]: " GITHUB_BRANCH
+    GITHUB_BRANCH=${GITHUB_BRANCH:-main}
+    
+    read -sp "Enter GitHub Personal Access Token: " GITHUB_TOKEN
+    echo ""
+    echo "✓ GitHub credentials provided"
+else
+    echo "⚠ Skipping CI/CD pipeline deployment"
+fi
+
+echo ""
+echo "========================================="
 
 # Step 1: Deploy Main Infrastructure
 echo ""
@@ -65,45 +88,69 @@ echo "API Endpoint: $API_ENDPOINT"
 echo "Data Bucket: $DATA_BUCKET"
 echo "Model Bucket: $MODEL_BUCKET"
 
-# Step 2: Deploy CI/CD Pipeline
+# Step 2: Deploy CI/CD Pipeline (Optional - requires GitHub token)
 echo ""
-echo "Step 2: Deploying CI/CD pipeline..."
-aws cloudformation create-stack \
-  --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
-  --template-body file://infrastructure/cicd-pipeline.yaml \
-  --parameters ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region $REGION
+echo "Step 2: CI/CD Pipeline deployment..."
 
-echo "Waiting for CI/CD pipeline stack..."
-aws cloudformation wait stack-create-complete \
-  --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
-  --region $REGION
+if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_REPO" ]; then
+    echo "GitHub credentials found, deploying CI/CD pipeline..."
+    aws cloudformation create-stack \
+      --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
+      --template-body file://infrastructure/cicd-pipeline.yaml \
+      --parameters \
+        ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+        ParameterKey=GitHubToken,ParameterValue=$GITHUB_TOKEN \
+        ParameterKey=GitHubRepo,ParameterValue=${GITHUB_REPO} \
+        ParameterKey=GitHubBranch,ParameterValue=${GITHUB_BRANCH:-main} \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --region $REGION
 
-echo "✓ CI/CD pipeline deployed"
+    echo "Waiting for CI/CD pipeline stack..."
+    aws cloudformation wait stack-create-complete \
+      --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
+      --region $REGION
 
-# Get CI/CD outputs
-REPO_URL=$(aws cloudformation describe-stacks \
-  --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
-  --query 'Stacks[0].Outputs[?OutputKey==`MLCodeRepositoryCloneUrl`].OutputValue' \
-  --output text \
-  --region $REGION)
+    echo "✓ CI/CD pipeline deployed"
 
-PIPELINE_NAME=$(aws cloudformation describe-stacks \
-  --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
-  --query 'Stacks[0].Outputs[?OutputKey==`PipelineName`].OutputValue' \
-  --output text \
-  --region $REGION)
+    # Get CI/CD outputs
+    REPO_URL=$(aws cloudformation describe-stacks \
+      --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
+      --query 'Stacks[0].Outputs[?OutputKey==`MLCodeRepositoryCloneUrl`].OutputValue' \
+      --output text \
+      --region $REGION)
 
-echo "Repository URL: $REPO_URL"
-echo "Pipeline Name: $PIPELINE_NAME"
+    PIPELINE_NAME=$(aws cloudformation describe-stacks \
+      --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
+      --query 'Stacks[0].Outputs[?OutputKey==`PipelineName`].OutputValue' \
+      --output text \
+      --region $REGION)
 
-# Step 3: Upload Glue Scripts
+    echo "Repository URL: $REPO_URL"
+    echo "Pipeline Name: $PIPELINE_NAME"
+else
+    echo "⚠ Skipping CI/CD pipeline (GitHub credentials not provided)"
+    echo "  To deploy CI/CD later, set environment variables:"
+    echo "    export GITHUB_TOKEN=your_token"
+    echo "    export GITHUB_REPO=owner/repo"
+    echo "  Then run: aws cloudformation create-stack --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} ..."
+    REPO_URL="Not deployed"
+    PIPELINE_NAME="Not deployed"
+fi
+
+# Step 3: Upload Glue Scripts (if they exist)
 echo ""
 echo "Step 3: Uploading Glue scripts..."
-aws s3 cp glue-scripts/data_validation.py s3://${DATA_BUCKET}/glue-scripts/ --region $REGION
-aws s3 cp glue-scripts/data_preprocessing.py s3://${DATA_BUCKET}/glue-scripts/ --region $REGION
-echo "✓ Glue scripts uploaded"
+if [ -d "glue-scripts" ]; then
+    if [ -f "glue-scripts/data_validation.py" ]; then
+        aws s3 cp glue-scripts/data_validation.py s3://${DATA_BUCKET}/glue-scripts/ --region $REGION
+    fi
+    if [ -f "glue-scripts/data_preprocessing.py" ]; then
+        aws s3 cp glue-scripts/data_preprocessing.py s3://${DATA_BUCKET}/glue-scripts/ --region $REGION
+    fi
+    echo "✓ Glue scripts uploaded"
+else
+    echo "⚠ Glue scripts directory not found, skipping"
+fi
 
 # Step 4: Deploy Data Pipeline
 echo ""
@@ -164,12 +211,32 @@ echo "✓ Lambda functions deployed"
 
 # Step 6: Upload Dataset
 echo ""
-echo "Step 6: Uploading dataset..."
+echo "Step 6: Dataset Upload"
+echo "----------------------"
 if [ -f "diabetic_data.csv" ]; then
-    aws s3 cp diabetic_data.csv s3://${DATA_BUCKET}/datasets/diabetic_data.csv --region $REGION
-    echo "✓ Dataset uploaded"
+    echo "Found diabetic_data.csv in current directory"
+    read -p "Upload dataset now? (y/n) [y]: " UPLOAD_DATASET
+    UPLOAD_DATASET=${UPLOAD_DATASET:-y}
+    
+    if [ "$UPLOAD_DATASET" = "y" ] || [ "$UPLOAD_DATASET" = "Y" ]; then
+        echo "Uploading dataset to S3..."
+        aws s3 cp diabetic_data.csv s3://${DATA_BUCKET}/datasets/diabetic_data.csv --region $REGION
+        echo "✓ Dataset uploaded to s3://${DATA_BUCKET}/datasets/diabetic_data.csv"
+    else
+        echo "⚠ Dataset upload skipped"
+        echo "  To upload later, run:"
+        echo "  aws s3 cp diabetic_data.csv s3://${DATA_BUCKET}/datasets/diabetic_data.csv"
+    fi
 else
-    echo "⚠ Warning: diabetic_data.csv not found"
+    echo "⚠ diabetic_data.csv not found in current directory"
+    echo ""
+    echo "To upload your dataset later:"
+    echo "  1. Place your CSV file in the project root"
+    echo "  2. Run: aws s3 cp your_dataset.csv s3://${DATA_BUCKET}/datasets/"
+    echo ""
+    echo "Or upload via AWS Console:"
+    echo "  Bucket: ${DATA_BUCKET}"
+    echo "  Path: datasets/"
 fi
 
 # Step 7: Deploy Frontend with Amplify
