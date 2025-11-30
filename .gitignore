@@ -42,12 +42,28 @@ htmlcov/
 # AWS
 .aws/
 *.pem
+*.key
+credentials
+*_token
+*.ppk
 
-# Data
-*.csv
+# Secrets and Environment
+.env
+.env.local
+.env.*.local
+*.secret
+
+# Deployment artifacts
+DEPLOYMENT_INFO.txt
+*.zip
+
+# Data (keep sample diabetic_data.csv)
+# *.csv  # Commented out to keep sample dataset
 *.parquet
 data/
 datasets/
+raw-data/
+processed-data/
 
 # Models
 models/

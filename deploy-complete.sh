@@ -213,22 +213,60 @@ echo "✓ Lambda functions deployed"
 echo ""
 echo "Step 6: Dataset Upload"
 echo "----------------------"
-if [ -f "diabetic_data.csv" ]; then
-    echo "Found diabetic_data.csv in current directory"
-    read -p "Upload dataset now? (y/n) [y]: " UPLOAD_DATASET
-    UPLOAD_DATASET=${UPLOAD_DATASET:-y}
+
+# Find CSV files in current directory (excluding hidden files)
+CSV_FILES=($(ls -t *.csv 2>/dev/null | head -5))
+
+if [ ${#CSV_FILES[@]} -gt 0 ]; then
+    echo "Found CSV file(s) in current directory:"
+    for i in "${!CSV_FILES[@]}"; do
+        FILE_SIZE=$(du -h "${CSV_FILES[$i]}" | cut -f1)
+        echo "  $((i+1)). ${CSV_FILES[$i]} (${FILE_SIZE})"
+    done
+    echo ""
     
-    if [ "$UPLOAD_DATASET" = "y" ] || [ "$UPLOAD_DATASET" = "Y" ]; then
-        echo "Uploading dataset to S3..."
-        aws s3 cp diabetic_data.csv s3://${DATA_BUCKET}/datasets/diabetic_data.csv --region $REGION
-        echo "✓ Dataset uploaded to s3://${DATA_BUCKET}/datasets/diabetic_data.csv"
-    else
+    # Default to the most recent file
+    DEFAULT_FILE="${CSV_FILES[0]}"
+    echo "Most recent: $DEFAULT_FILE"
+    echo ""
+    
+    read -p "Select file number to upload [1] or 'n' to skip: " FILE_CHOICE
+    
+    if [ "$FILE_CHOICE" = "n" ] || [ "$FILE_CHOICE" = "N" ]; then
         echo "⚠ Dataset upload skipped"
-        echo "  To upload later, run:"
-        echo "  aws s3 cp diabetic_data.csv s3://${DATA_BUCKET}/datasets/diabetic_data.csv"
+        DATASET_FILE=""
+    else
+        # Default to 1 if empty
+        FILE_CHOICE=${FILE_CHOICE:-1}
+        
+        # Validate choice
+        if [ "$FILE_CHOICE" -ge 1 ] && [ "$FILE_CHOICE" -le ${#CSV_FILES[@]} ]; then
+            DATASET_FILE="${CSV_FILES[$((FILE_CHOICE-1))]}"
+            echo "Selected: $DATASET_FILE"
+            echo "Uploading dataset to S3..."
+            
+            aws s3 cp "$DATASET_FILE" "s3://${DATA_BUCKET}/datasets/$DATASET_FILE" --region $REGION
+            
+            if [ $? -eq 0 ]; then
+                echo "✓ Dataset uploaded to s3://${DATA_BUCKET}/datasets/$DATASET_FILE"
+                UPLOADED_DATASET="s3://${DATA_BUCKET}/datasets/$DATASET_FILE"
+            else
+                echo "✗ Upload failed"
+                DATASET_FILE=""
+            fi
+        else
+            echo "Invalid selection. Skipping upload."
+            DATASET_FILE=""
+        fi
+    fi
+    
+    if [ -z "$DATASET_FILE" ]; then
+        echo ""
+        echo "To upload later, run:"
+        echo "  aws s3 cp your_dataset.csv s3://${DATA_BUCKET}/datasets/"
     fi
 else
-    echo "⚠ diabetic_data.csv not found in current directory"
+    echo "⚠ No CSV files found in current directory"
     echo ""
     echo "To upload your dataset later:"
     echo "  1. Place your CSV file in the project root"
@@ -237,6 +275,7 @@ else
     echo "Or upload via AWS Console:"
     echo "  Bucket: ${DATA_BUCKET}"
     echo "  Path: datasets/"
+    DATASET_FILE=""
 fi
 
 # Step 7: Deploy Frontend with Amplify
@@ -320,21 +359,54 @@ FRONTEND
 Amplify URL: ${AMPLIFY_URL:-"Not deployed (set GITHUB_TOKEN to deploy)"}
 Local Build: frontend/build/index.html
 
+GITHUB INTEGRATION
+------------------
+CI/CD Pipeline: ${PIPELINE_NAME}
+Repository: ${REPO_URL}
+Status: $([ -n "$GITHUB_TOKEN" ] && echo "Deployed" || echo "Not deployed - GitHub token not provided")
+
+DATASET UPLOAD
+--------------
+Data Bucket: s3://${DATA_BUCKET}
+Upload Location: s3://${DATA_BUCKET}/datasets/
+Uploaded Dataset: ${UPLOADED_DATASET:-"None - upload manually"}
+
+To upload dataset:
+  aws s3 cp your_dataset.csv s3://${DATA_BUCKET}/datasets/
+
 NEXT STEPS
 ----------
-1. Access UI: 
-   - Amplify: ${AMPLIFY_URL:-"Set GITHUB_TOKEN and redeploy"}
+1. Upload Dataset (if not done):
+   - aws s3 cp diabetic_data.csv s3://${DATA_BUCKET}/datasets/
+   - See docs/DATASET_UPLOAD_GUIDE.md for details
+
+2. Access UI: 
+   - Amplify: ${AMPLIFY_URL:-"Not deployed - requires GitHub token"}
    - Local: open frontend/build/index.html
-2. Test API: curl $API_ENDPOINT/models
-3. Push code to GitHub to trigger CI/CD
-4. Upload data to s3://${DATA_BUCKET}/raw-data/ to trigger data pipeline
-5. Monitor in CloudWatch and Amplify Console
+
+3. Test API: 
+   - curl $API_ENDPOINT/models
+
+4. Start Training Job:
+   - Via UI: Training Pipeline → Start New Job
+   - Via API: POST $API_ENDPOINT/training/start
+
+5. Setup CI/CD (if skipped):
+   - Set: export GITHUB_TOKEN=your_token
+   - Set: export GITHUB_REPO=owner/repo
+   - Redeploy CI/CD stack
+
+6. Monitor:
+   - CloudWatch Logs: /aws/lambda/mlops-platform-*
+   - CloudWatch Metrics: Custom/MLOps namespace
 
 DOCUMENTATION
 -------------
-- AWS_WELL_ARCHITECTED.md - Framework compliance
-- DEPLOYMENT.md - Detailed deployment guide
-- QUICKSTART.md - Quick start guide
+- docs/DATASET_UPLOAD_GUIDE.md - When and how to upload datasets
+- docs/IAM_SETUP_GUIDE.md - IAM permissions setup
+- docs/AWS_WELL_ARCHITECTED.md - Framework compliance
+- docs/DEPLOYMENT.md - Detailed deployment guide
+- docs/QUICKSTART.md - Quick start guide
 
 ========================================
 EOF
@@ -344,28 +416,64 @@ echo "✓ Deployment summary created"
 # Final Summary
 echo ""
 echo "========================================="
-echo "Deployment Complete!"
+echo "🎉 Deployment Complete!"
 echo "========================================="
 echo ""
 echo "✅ Main Infrastructure (Lambda, API Gateway, S3, DynamoDB)"
-echo "✅ CI/CD Pipeline (CodePipeline, CodeBuild, CodeCommit)"
+if [ -n "$GITHUB_TOKEN" ]; then
+    echo "✅ CI/CD Pipeline (GitHub Integration)"
+else
+    echo "⚠️  CI/CD Pipeline (Skipped - no GitHub token)"
+fi
 echo "✅ Data Pipeline (Glue, Step Functions, EventBridge)"
 echo "✅ Lambda Functions Deployed"
-echo "✅ Frontend Built"
+echo "✅ Frontend Built Locally"
 echo ""
-echo "API Endpoint: $API_ENDPOINT"
-echo "Data Bucket: $DATA_BUCKET"
-echo "Model Bucket: $MODEL_BUCKET"
+echo "📍 Key Resources:"
+echo "   API Endpoint: $API_ENDPOINT"
+echo "   Data Bucket: $DATA_BUCKET"
+echo "   Model Bucket: $MODEL_BUCKET"
 echo ""
-echo "Repository: $REPO_URL"
-echo "Pipeline: $PIPELINE_NAME"
-echo ""
+if [ -n "$GITHUB_TOKEN" ]; then
+    echo "🔗 GitHub Integration:"
+    echo "   Repository: $REPO_URL"
+    echo "   Pipeline: $PIPELINE_NAME"
+    echo ""
+fi
 echo "📄 Full details saved to: DEPLOYMENT_INFO.txt"
 echo ""
-echo "Next Steps:"
-echo "1. Test API: curl $API_ENDPOINT/models"
-echo "2. Access UI: open frontend/build/index.html"
-echo "3. View pipelines in AWS Console"
-echo "4. Check AWS_WELL_ARCHITECTED.md for compliance details"
+echo "🚀 Quick Start:"
+echo ""
+if [ -n "$UPLOADED_DATASET" ]; then
+    echo "1. ✅ Dataset Uploaded:"
+    echo "   $UPLOADED_DATASET"
+    echo ""
+else
+    echo "1. Upload Dataset (Required for training):"
+    echo "   aws s3 cp your_dataset.csv s3://${DATA_BUCKET}/datasets/"
+    echo "   📖 See: docs/DATASET_UPLOAD_GUIDE.md"
+    echo ""
+fi
+echo "2. Access the UI:"
+echo "   open frontend/build/index.html"
+echo ""
+echo "3. Test the API:"
+echo "   curl $API_ENDPOINT/models"
+echo ""
+echo "4. Start a Training Job:"
+echo "   - Via UI: Training Pipeline → Start New Job"
+echo "   - Via API: POST $API_ENDPOINT/training/start"
+echo ""
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo "💡 To enable CI/CD later:"
+    echo "   export GITHUB_TOKEN=your_token"
+    echo "   export GITHUB_REPO=owner/repo"
+    echo "   Then redeploy the CI/CD stack"
+    echo ""
+fi
+echo "📚 Documentation:"
+echo "   - docs/DATASET_UPLOAD_GUIDE.md - Dataset management"
+echo "   - docs/IAM_SETUP_GUIDE.md - Permissions"
+echo "   - docs/QUICKSTART.md - Getting started"
 echo ""
 echo "========================================="

@@ -82,14 +82,14 @@ First, ensure you have the required AWS permissions:
 
 ```bash
 # Quick setup (creates and attaches policy to your user)
-chmod +x setup-iam-quick.sh
-./setup-iam-quick.sh
+chmod +x setup-iam.sh
+./setup-iam.sh --quick
 ```
 
-Or manually attach the policy:
+Or for detailed setup with verification:
 ```bash
-chmod +x setup-iam-permissions.sh
-./setup-iam-permissions.sh
+chmod +x setup-iam.sh
+./setup-iam.sh
 ```
 
 For detailed IAM setup instructions, see [IAM Setup Guide](docs/IAM_SETUP_GUIDE.md).

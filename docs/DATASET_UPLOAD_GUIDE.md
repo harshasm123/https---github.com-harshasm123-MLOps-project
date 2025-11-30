@@ -23,17 +23,30 @@ You can upload datasets at any time after the platform is deployed:
 
 ### Option 1: During Deployment (Interactive)
 
-When running `./deploy-complete.sh`, you'll see:
+When running `./deploy-complete.sh`, the script will automatically detect CSV files in your directory:
 
 ```
 Step 6: Dataset Upload
 ----------------------
-Found diabetic_data.csv in current directory
-Upload dataset now? (y/n) [y]:
+Found CSV file(s) in current directory:
+  1. diabetic_data.csv (2.5M)
+  2. patient_data_2024.csv (1.8M)
+  3. training_set.csv (3.2M)
+
+Most recent: diabetic_data.csv
+
+Select file number to upload [1] or 'n' to skip:
 ```
 
-- Press `y` or Enter to upload immediately
+- Enter a number (1-3) to select a specific file
+- Press Enter to use the most recent file (default)
 - Press `n` to skip and upload later
+
+The script automatically:
+- Lists up to 5 most recent CSV files
+- Shows file sizes
+- Defaults to the most recently modified file
+- Preserves the original filename in S3
 
 ### Option 2: AWS CLI (After Deployment)
 

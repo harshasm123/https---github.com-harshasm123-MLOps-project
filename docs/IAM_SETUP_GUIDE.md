@@ -19,14 +19,23 @@ The deployment requires various AWS permissions to create and manage resources i
 Run the automated setup script:
 
 ```bash
-chmod +x setup-iam-permissions.sh
-./setup-iam-permissions.sh
+# Quick mode (fast setup with minimal output)
+chmod +x setup-iam.sh
+./setup-iam.sh --quick
+```
+
+Or for detailed setup with full verification:
+
+```bash
+chmod +x setup-iam.sh
+./setup-iam.sh
 ```
 
 This script will:
 1. Create an IAM policy with all required permissions
 2. Attach the policy to your current IAM user or role
 3. Verify the permissions are working
+4. Provide troubleshooting guidance if needed
 
 ## Manual Setup
 
