@@ -1,13 +1,18 @@
 #!/bin/bash
 
-# Prerequisites Setup Script for MLOps Platform
-# This script checks and installs all required dependencies
+# Prerequisites Checker and Setup Script for MLOps Platform
+# This script checks and installs all required dependencies for local development
+# For EC2 setup, use ec2-setup.sh instead
 
 set -e
 
 echo "========================================="
 echo "MLOps Platform - Prerequisites Setup"
 echo "========================================="
+echo ""
+echo "This script will check and install all required dependencies"
+echo "for local development and deployment."
+echo ""
 
 # Color codes for output
 RED='\033[0;31m'
@@ -151,10 +156,22 @@ else
     echo "   Install: brew install jq (macOS) or apt-get install jq (Linux)"
 fi
 
+# Check Docker (optional for local testing)
+echo ""
+echo "9. Checking Docker (optional)..."
+if command_exists docker; then
+    DOCKER_VERSION=$(docker --version | cut -d' ' -f3 | tr -d ',')
+    print_status 0 "Docker installed (version $DOCKER_VERSION)"
+else
+    print_warning "Docker not found (optional, but useful for local testing)"
+    echo "   Install: https://www.docker.com/get-started"
+fi
+
 # Install Python dependencies
 echo ""
-echo "9. Installing Python dependencies..."
+echo "10. Installing Python dependencies..."
 if [ -f "requirements.txt" ]; then
+    echo "   Installing from requirements.txt..."
     pip3 install -r requirements.txt --quiet
     print_status $? "Python dependencies installed"
 else
@@ -163,7 +180,7 @@ fi
 
 # Check AWS region
 echo ""
-echo "10. Checking AWS region..."
+echo "11. Checking AWS region..."
 AWS_REGION=$(aws configure get region)
 if [ -z "$AWS_REGION" ]; then
     print_warning "AWS region not set, defaulting to us-east-1"
@@ -174,7 +191,7 @@ fi
 
 # Check required AWS services availability
 echo ""
-echo "11. Checking AWS service availability..."
+echo "12. Checking AWS service availability..."
 
 # Check SageMaker
 if aws sagemaker list-training-jobs --max-results 1 >/dev/null 2>&1; then
