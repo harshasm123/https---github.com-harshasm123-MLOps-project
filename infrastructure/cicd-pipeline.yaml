@@ -287,13 +287,22 @@ Resources:
       Code:
         ZipFile: |
           import json
+          import cfnresponse
+          
           def handler(event, context):
-              # Placeholder for ArgoCD setup
-              # In production, this would configure ArgoCD for GitOps
-              return {
-                  'PhysicalResourceId': 'argocd-setup',
-                  'Data': {'Status': 'Configured'}
-              }
+              try:
+                  # Placeholder for ArgoCD setup
+                  # In production, this would configure ArgoCD for GitOps
+                  
+                  response_data = {'Status': 'Configured'}
+                  physical_id = 'argocd-setup'
+                  
+                  # Always send success response to CloudFormation
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data, physical_id)
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  # Send failure response
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {}, 'argocd-setup')
 
   ArgoCDSetupRole:
     Type: AWS::IAM::Role
