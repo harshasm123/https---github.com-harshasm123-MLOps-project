@@ -88,9 +88,9 @@ aws s3api head-bucket --bucket $FRONTEND_BUCKET --region $REGION 2>/dev/null || 
 aws cloudformation deploy \
   --template-file infrastructure/cloudfront-template.yaml \
   --stack-name mlops-platform-cloudfront-${ENVIRONMENT} \
-  --parameters \
-    ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
-    ParameterKey=FrontendBucketName,ParameterValue=$FRONTEND_BUCKET \
+  --parameter-overrides \
+    Environment=$ENVIRONMENT \
+    FrontendBucketName=$FRONTEND_BUCKET \
   --region $REGION
 
 CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
