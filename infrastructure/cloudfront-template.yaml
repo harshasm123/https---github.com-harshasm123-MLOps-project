@@ -87,7 +87,7 @@ Resources:
         - !Ref FrontendBucketName
       PolicyDocument:
         Statement:
-          - Sid: AllowCloudFrontServicePrincipal
+          - Sid: AllowCloudFrontOAC
             Effect: Allow
             Principal:
               Service: cloudfront.amazonaws.com
@@ -107,7 +107,7 @@ Resources:
                 - !Sub 'arn:aws:s3:::${FrontendBucketName}/*'
             Condition:
               StringEquals:
-                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution.Id}'
 
 Outputs:
   CloudFrontDistributionId:
