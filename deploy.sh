@@ -14,11 +14,11 @@ command -v jq >/dev/null 2>&1 || { echo "jq is required but not installed. Abort
 # Parse arguments
 FULL_DEPLOYMENT=false
 USE_CLOUDFRONT=false
-if [ "$1" = "--full" ]; then
+if [ "${1:-}" = "--full" ]; then
     FULL_DEPLOYMENT=true
-elif [ "$1" = "--cloudfront" ]; then
+elif [ "${1:-}" = "--cloudfront" ]; then
     USE_CLOUDFRONT=true
-elif [ "$1" = "--full-cloudfront" ]; then
+elif [ "${1:-}" = "--full-cloudfront" ]; then
     FULL_DEPLOYMENT=true
     USE_CLOUDFRONT=true
 fi
@@ -27,6 +27,13 @@ fi
 STACK_NAME_BASE="mlops-platform"
 ENVIRONMENT="dev"
 REGION="us-east-1"
+
+# Initialize variables
+GITHUB_REPO=""
+GITHUB_TOKEN=""
+GITHUB_BRANCH="main"
+CLOUDFRONT_URL=""
+UPLOADED_DATASET=""
 
 # Get AWS Account ID and validate credentials
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
@@ -89,13 +96,13 @@ if [ "$FULL_DEPLOYMENT" = true ]; then
     echo "The CI/CD pipeline requires GitHub integration."
     echo "Press Enter to skip CI/CD deployment."
     echo ""
-    read -p "Enter GitHub repository (format: owner/repo) or press Enter to skip: " GITHUB_REPO
+    read -p "Enter GitHub repository (format: owner/repo) or press Enter to skip: " GITHUB_REPO || true
     
     if [ -n "$GITHUB_REPO" ]; then
-        read -p "Enter GitHub branch [main]: " GITHUB_BRANCH
+        read -p "Enter GitHub branch [main]: " GITHUB_BRANCH || true
         GITHUB_BRANCH=${GITHUB_BRANCH:-main}
         
-        read -sp "Enter GitHub Personal Access Token: " GITHUB_TOKEN
+        read -sp "Enter GitHub Personal Access Token: " GITHUB_TOKEN || true
         echo ""
         echo "✓ GitHub credentials provided"
     else
@@ -213,27 +220,13 @@ if [ "$FULL_DEPLOYMENT" = true ]; then
             ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
             ParameterKey=GitHubToken,ParameterValue=$GITHUB_TOKEN \
             ParameterKey=GitHubRepo,ParameterValue=${GITHUB_REPO} \
-            ParameterKey=GitHubBranch,ParameterValue=${GITHUB_BRANCH:-main} \
+            ParameterKey=GitHubBranch,ParameterValue=${GITHUB_BRANCH} \
           --capabilities CAPABILITY_NAMED_IAM \
           --region $REGION 2>/dev/null || echo "Stack may already exist"
 
         echo "✓ CI/CD pipeline deployed"
-        
-        REPO_URL=$(aws cloudformation describe-stacks \
-          --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
-          --query 'Stacks[0].Outputs[?OutputKey==`MLCodeRepositoryCloneUrl`].OutputValue' \
-          --output text \
-          --region $REGION 2>/dev/null || echo "Not available")
-        
-        PIPELINE_NAME=$(aws cloudformation describe-stacks \
-          --stack-name ${STACK_NAME_BASE}-cicd-${ENVIRONMENT} \
-          --query 'Stacks[0].Outputs[?OutputKey==`PipelineName`].OutputValue' \
-          --output text \
-          --region $REGION 2>/dev/null || echo "Not available")
     else
         echo "⚠ Skipping CI/CD (no GitHub credentials)"
-        REPO_URL="Not deployed"
-        PIPELINE_NAME="Not deployed"
     fi
     
     # Step 3: Upload Glue Scripts
@@ -260,12 +253,6 @@ if [ "$FULL_DEPLOYMENT" = true ]; then
       --region $REGION 2>/dev/null || echo "Stack may already exist"
 
     echo "✓ Data pipeline deployed"
-    
-    STATE_MACHINE_ARN=$(aws cloudformation describe-stacks \
-      --stack-name ${STACK_NAME_BASE}-data-pipeline-${ENVIRONMENT} \
-      --query 'Stacks[0].Outputs[?OutputKey==`DataPipelineStateMachineArn`].OutputValue' \
-      --output text \
-      --region $REGION 2>/dev/null || echo "Not available")
 fi
 
 # Step 5 (or 2 for simple): Deploy Lambda Functions
@@ -309,7 +296,7 @@ echo ""
 echo "Step $STEP_NUM: Dataset Upload"
 echo "----------------------"
 
-CSV_FILES=($(ls -t *.csv 2>/dev/null | head -5))
+CSV_FILES=($(ls -t *.csv 2>/dev/null | head -5 || true))
 
 if [ ${#CSV_FILES[@]} -gt 0 ]; then
     echo "Found CSV file(s):"
@@ -321,7 +308,7 @@ if [ ${#CSV_FILES[@]} -gt 0 ]; then
     echo "Most recent: ${CSV_FILES[0]}"
     echo ""
     
-    read -p "Select file number [1] or 'n' to skip: " FILE_CHOICE
+    read -p "Select file number [1] or 'n' to skip: " FILE_CHOICE || true
     
     if [ "$FILE_CHOICE" != "n" ] && [ "$FILE_CHOICE" != "N" ]; then
         FILE_CHOICE=${FILE_CHOICE:-1}
@@ -356,109 +343,8 @@ npm run build 2>/dev/null || echo "Build completed with warnings"
 cd ..
 echo "✓ Frontend built (frontend/build/)"
 
-# Create deployment summary
-echo ""
-echo "Creating deployment summary..."
-
-cat > DEPLOYMENT_INFO.txt << EOF
-========================================
-MLOps Platform Deployment Summary
-========================================
-Date: $(date)
-Environment: $ENVIRONMENT
-Region: $REGION
-Deployment Type: $( [ "$FULL_DEPLOYMENT" = true ] && echo "Full" || echo "Infrastructure Only" )
-
-INFRASTRUCTURE
---------------
-Main Stack: ${STACK_NAME_BASE}-${ENVIRONMENT}
-$( [ "$FULL_DEPLOYMENT" = true ] && echo "CI/CD Stack: ${STACK_NAME_BASE}-cicd-${ENVIRONMENT}" || echo "" )
-$( [ "$FULL_DEPLOYMENT" = true ] && echo "Data Pipeline Stack: ${STACK_NAME_BASE}-data-pipeline-${ENVIRONMENT}" || echo "" )
-
-ENDPOINTS
----------
-API Gateway: $API_ENDPOINT
-
-STORAGE
--------
-Data Bucket: $DATA_BUCKET
-Model Bucket: $MODEL_BUCKET
-
-$( [ "$FULL_DEPLOYMENT" = true ] && [ -n "$GITHUB_TOKEN" ] && echo "GITHUB INTEGRATION
-------------------
-Repository: ${REPO_URL}
-Pipeline: ${PIPELINE_NAME}" || echo "" )
-
-DATASET
--------
-Uploaded: ${UPLOADED_DATASET:-"None - upload manually"}
-Upload command: aws s3 cp your_dataset.csv s3://${DATA_BUCKET}/datasets/
-
-NEXT STEPS
-----------
-1. Upload dataset (if not done): aws s3 cp dataset.csv s3://${DATA_BUCKET}/datasets/
-2. Access UI: open frontend/build/index.html
-3. Test API: curl $API_ENDPOINT/models
-4. Start training: POST $API_ENDPOINT/training/start
-
-DOCUMENTATION
--------------
-- docs/QUICKSTART.md - Getting started
-- docs/DATASET_UPLOAD_GUIDE.md - Dataset management
-- docs/DEPLOYMENT.md - Deployment guide
-========================================
-EOF
-
-# Final Summary
-echo ""
-echo "========================================="
-echo "🎉 Deployment Complete!"
-echo "========================================="
-echo ""
-if [ "$FULL_DEPLOYMENT" = true ]; then
-    echo "✅ Main Infrastructure"
-    [ -n "$GITHUB_TOKEN" ] && echo "✅ CI/CD Pipeline" || echo "⚠️  CI/CD Pipeline (skipped)"
-    echo "✅ Data Pipeline"
-    echo "✅ Lambda Functions"
-    echo "✅ Frontend Built"
-else
-    echo "✅ Infrastructure Deployed"
-    echo "✅ Lambda Functions Updated"
-    echo "✅ Frontend Built"
-fi
-echo ""
-echo "📍 Resources:"
-echo "   API: $API_ENDPOINT"
-echo "   Data: $DATA_BUCKET"
-echo "   Models: $MODEL_BUCKET"
-if [ -n "$CLOUDFRONT_URL" ]; then
-    echo "   Frontend: $CLOUDFRONT_URL"
-else
-    echo "   Frontend: frontend/build/index.html (local)"
-fi
-echo ""
-[ -n "$UPLOADED_DATASET" ] && echo "✅ Dataset: $UPLOADED_DATASET" && echo ""
-echo "📄 Details: DEPLOYMENT_INFO.txt"
-echo ""
-echo "🚀 Next Steps:"
-echo "   1. Upload dataset: aws s3 cp dataset.csv s3://${DATA_BUCKET}/datasets/"
-if [ -n "$CLOUDFRONT_URL" ]; then
-    echo "   2. Open UI: $CLOUDFRONT_URL"
-else
-    echo "   2. Open UI: frontend/build/index.html"
-fi
-echo "   3. Test API: curl $API_ENDPOINT/models"
-echo ""
-if [ "$FULL_DEPLOYMENT" = false ] && [ "$USE_CLOUDFRONT" = false ]; then
-    echo "💡 Deployment options:"
-    echo "   ./deploy.sh --full              # Full deployment"
-    echo "   ./deploy.sh --cloudfront       # Add CloudFront"
-    echo "   ./deploy.sh --full-cloudfront  # Full + CloudFront"
-    echo ""
-fi
-echo "========================================="
-# Step: Deploy CloudFront (if requested)
-if [ "$USE_CLOUDFRONT" = true ] || [ "$FULL_DEPLOYMENT" = true ]; then
+# Step 8 (or 5 for simple): Deploy CloudFront (if requested)
+if [ "$USE_CLOUDFRONT" = true ]; then
     STEP_NUM=$( [ "$FULL_DEPLOYMENT" = true ] && echo "8" || echo "5" )
     echo ""
     echo "Step $STEP_NUM: Deploying CloudFront distribution..."
@@ -500,3 +386,44 @@ if [ "$USE_CLOUDFRONT" = true ] || [ "$FULL_DEPLOYMENT" = true ]; then
     
     echo "✓ Frontend deployed to CloudFront"
 fi
+
+# Final Summary
+echo ""
+echo "========================================="
+echo "🎉 Deployment Complete!"
+echo "========================================="
+echo ""
+if [ "$FULL_DEPLOYMENT" = true ]; then
+    echo "✅ Main Infrastructure"
+    [ -n "$GITHUB_TOKEN" ] && echo "✅ CI/CD Pipeline" || echo "⚠️  CI/CD Pipeline (skipped)"
+    echo "✅ Lambda Functions"
+    echo "✅ Frontend Built"
+else
+    echo "✅ Infrastructure Deployed"
+    echo "✅ Lambda Functions Updated"
+    echo "✅ Frontend Built"
+fi
+echo ""
+echo "📍 Resources:"
+echo "   API: $API_ENDPOINT"
+echo "   Data: $DATA_BUCKET"
+echo "   Models: $MODEL_BUCKET"
+if [ -n "$CLOUDFRONT_URL" ]; then
+    echo "   Frontend: $CLOUDFRONT_URL"
+else
+    echo "   Frontend: frontend/build/index.html (local)"
+fi
+echo ""
+[ -n "$UPLOADED_DATASET" ] && echo "✅ Dataset: $UPLOADED_DATASET" && echo ""
+echo "📄 Details: DEPLOYMENT_INFO.txt"
+echo ""
+echo "🚀 Next Steps:"
+echo "   1. Upload dataset: aws s3 cp dataset.csv s3://${DATA_BUCKET}/datasets/"
+if [ -n "$CLOUDFRONT_URL" ]; then
+    echo "   2. Open UI: $CLOUDFRONT_URL"
+else
+    echo "   2. Open UI: frontend/build/index.html"
+fi
+echo "   3. Test API: curl $API_ENDPOINT/models"
+echo ""
+echo "========================================="
