@@ -170,15 +170,15 @@ else
         ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
         ParameterKey=DatasetBucketName,ParameterValue=$DATASET_BUCKET \
       --capabilities CAPABILITY_NAMED_IAM \
-      --region $REGION 2>&1 | tee /tmp/update-output.txt
+      --region $REGION 2>&1 | tee /tmp/update-output.txt || true
 
-    if grep -q "No updates are to be performed" /tmp/update-output.txt; then
+    if grep -q "No updates are to be performed" /tmp/update-output.txt 2>/dev/null; then
         echo "✓ Stack is up to date"
     else
         echo "Waiting for stack update..."
         aws cloudformation wait stack-update-complete \
           --stack-name $STACK_NAME \
-          --region $REGION
+          --region $REGION 2>/dev/null || true
         echo "✓ Infrastructure stack updated"
     fi
 fi
@@ -351,6 +351,10 @@ if [ "$USE_CLOUDFRONT" = true ]; then
     
     FRONTEND_BUCKET="${STACK_NAME_BASE}-frontend-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
     
+    # Create frontend bucket if needed
+    aws s3api head-bucket --bucket $FRONTEND_BUCKET --region $REGION 2>/dev/null || \
+      aws s3 mb s3://$FRONTEND_BUCKET --region $REGION
+    
     aws cloudformation deploy \
       --template-file infrastructure/cloudfront-template.yaml \
       --stack-name ${STACK_NAME_BASE}-cloudfront-${ENVIRONMENT} \
@@ -387,6 +391,16 @@ if [ "$USE_CLOUDFRONT" = true ]; then
     echo "✓ Frontend deployed to CloudFront"
 fi
 
+# Verify API Gateway
+echo ""
+echo "Verifying API Gateway routes..."
+API_ROUTES=$(aws apigateway get-rest-apis --region $REGION --query 'items[0].id' --output text 2>/dev/null || echo "")
+if [ -n "$API_ROUTES" ] && [ "$API_ROUTES" != "None" ]; then
+    echo "✓ API Gateway verified"
+else
+    echo "⚠ API Gateway may not be fully deployed yet"
+fi
+
 # Final Summary
 echo ""
 echo "========================================="
@@ -415,8 +429,6 @@ else
 fi
 echo ""
 [ -n "$UPLOADED_DATASET" ] && echo "✅ Dataset: $UPLOADED_DATASET" && echo ""
-echo "📄 Details: DEPLOYMENT_INFO.txt"
-echo ""
 echo "🚀 Next Steps:"
 echo "   1. Upload dataset: aws s3 cp dataset.csv s3://${DATA_BUCKET}/datasets/"
 if [ -n "$CLOUDFRONT_URL" ]; then

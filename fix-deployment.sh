@@ -18,23 +18,20 @@ echo "Stack: $STACK_NAME"
 echo "Region: $REGION"
 echo ""
 
-# Step 1: Update CloudFormation Stack
-echo "Step 1: Updating CloudFormation stack..."
-aws cloudformation update-stack \
+# Step 1: Verify Stack Exists
+echo "Step 1: Verifying CloudFormation stack..."
+STACK_STATUS=$(aws cloudformation describe-stacks \
   --stack-name $STACK_NAME \
-  --template-body file://infrastructure/cloudformation-template.yaml \
-  --parameters \
-    ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
-    ParameterKey=DatasetBucketName,ParameterValue=$DATA_BUCKET \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region $REGION
+  --query 'Stacks[0].StackStatus' \
+  --output text \
+  --region $REGION 2>/dev/null || echo "")
 
-echo "Waiting for stack update..."
-aws cloudformation wait stack-update-complete \
-  --stack-name $STACK_NAME \
-  --region $REGION
+if [ -z "$STACK_STATUS" ]; then
+    echo "Error: Stack not found"
+    exit 1
+fi
 
-echo "✓ Stack updated"
+echo "✓ Stack status: $STACK_STATUS"
 
 # Step 2: Get API Endpoint
 API_ENDPOINT=$(aws cloudformation describe-stacks \
@@ -45,7 +42,7 @@ API_ENDPOINT=$(aws cloudformation describe-stacks \
 
 echo "API Endpoint: $API_ENDPOINT"
 
-# Step 3: Deploy Lambda Functions
+# Step 2: Deploy Lambda Functions
 echo ""
 echo "Step 2: Deploying Lambda functions..."
 cd backend/lambda
@@ -80,9 +77,13 @@ cd ../..
 
 echo "✓ Lambda functions deployed"
 
-# Step 4: Deploy CloudFront
+# Step 3: Deploy CloudFront
 echo ""
 echo "Step 3: Deploying CloudFront distribution..."
+
+# Create frontend bucket if needed
+aws s3api head-bucket --bucket $FRONTEND_BUCKET --region $REGION 2>/dev/null || \
+  aws s3 mb s3://$FRONTEND_BUCKET --region $REGION
 
 aws cloudformation deploy \
   --template-file infrastructure/cloudfront-template.yaml \
@@ -100,7 +101,7 @@ CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
 
 echo "✓ CloudFront deployed: $CLOUDFRONT_URL"
 
-# Step 5: Upload Frontend
+# Step 4: Upload Frontend
 echo ""
 echo "Step 4: Uploading frontend to S3..."
 
@@ -110,10 +111,6 @@ echo "REACT_APP_API_URL=$API_ENDPOINT" > .env
 npm install --silent 2>/dev/null || npm install
 npm run build 2>/dev/null || echo "Build completed"
 cd ..
-
-# Create frontend bucket if needed
-aws s3api head-bucket --bucket $FRONTEND_BUCKET --region $REGION 2>/dev/null || \
-  aws s3 mb s3://$FRONTEND_BUCKET --region $REGION
 
 # Upload to S3
 aws s3 sync frontend/build/ s3://${FRONTEND_BUCKET}/ --delete --region $REGION
@@ -132,12 +129,21 @@ aws cloudfront create-invalidation \
 
 echo "✓ Frontend deployed to CloudFront"
 
-# Step 6: Verify API
+# Step 5: Verify API
 echo ""
 echo "Step 5: Verifying API endpoints..."
 
 echo "Testing GET /models..."
-curl -s "$API_ENDPOINT/models" | jq . || echo "API response received"
+RESPONSE=$(curl -s -w "\n%{http_code}" "$API_ENDPOINT/models")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | head -n-1)
+
+if [ "$HTTP_CODE" = "200" ]; then
+    echo "✓ API working: $BODY"
+else
+    echo "⚠ API returned HTTP $HTTP_CODE"
+    echo "Response: $BODY"
+fi
 
 echo ""
 echo "=========================================="
