@@ -135,7 +135,7 @@ echo ""
 echo "Step 1: Deploying main infrastructure..."
 
 STACK_NAME="${STACK_NAME_BASE}-${ENVIRONMENT}"
-STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION 2>&1)
+STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION 2>&1 || true)
 
 if echo "$STACK_EXISTS" | grep -q "does not exist"; then
     echo "Creating new stack..."
