@@ -2,90 +2,46 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: 'CloudFront distribution for MLOps Platform frontend'
 
 Parameters:
-  ProjectName:
-    Type: String
-    Default: mlops-platform
-    Description: Name of the project
-  
   Environment:
     Type: String
     Default: dev
-    AllowedValues:
-      - dev
-      - staging
-      - prod
-    Description: Environment name
   
   FrontendBucketName:
     Type: String
-    Description: Name of the S3 bucket containing frontend assets
-  FrontendBucketArn:
-    Type: String
-    Default: ''
-    Description: (Optional) ARN of the S3 bucket (e.g. arn:aws:s3:::bucket-name). If provided, bucket name will be derived from this ARN.
-
-Conditions:
-  UseBucketArn: !Not [ !Equals [ !Ref FrontendBucketArn, '' ] ]
 
 Resources:
-  # Origin Access Control for CloudFront
   OriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
-        Name: !Sub '${ProjectName}-${Environment}-oac'
+        Name: !Sub 'mlops-${Environment}-oac'
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
 
-  # CloudFront Distribution
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
       DistributionConfig:
         Origins:
           - Id: S3Origin
-            DomainName:
-              Fn::If:
-                - UseBucketArn
-                - Fn::Join:
-                    - ''
-                    - - Fn::Select:
-                        - 5
-                        - Fn::Split:
-                            - ':'
-                            - !Ref FrontendBucketArn
-                      - !Sub ".s3.${AWS::Region}.amazonaws.com"
-                - !Sub '${FrontendBucketName}.s3.${AWS::Region}.amazonaws.com'
+            DomainName: !Sub '${FrontendBucketName}.s3.${AWS::Region}.amazonaws.com'
             OriginAccessControlId: !GetAtt OriginAccessControl.Id
         Enabled: true
         DefaultRootObject: index.html
-        Comment: !Sub '${ProjectName} ${Environment} Frontend Distribution'
         DefaultCacheBehavior:
           AllowedMethods:
-            - DELETE
             - GET
             - HEAD
             - OPTIONS
-            - PATCH
-            - POST
-            - PUT
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
-          OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf  # Managed-CORS-S3Origin
-          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # Managed-SecurityHeadersPolicy
-        CacheBehaviors:
-          - PathPattern: '/static/*'
-            TargetOriginId: S3Origin
-            ViewerProtocolPolicy: redirect-to-https
-            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # Managed-CachingOptimizedForUncompressedObjects
-            Compress: true
-          - PathPattern: '/api/*'
-            TargetOriginId: S3Origin
-            ViewerProtocolPolicy: redirect-to-https
-            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-            TTL: 0
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          TrustedSigners: []
+          Compress: true
         CustomErrorResponses:
           - ErrorCode: 403
             ResponseCode: 200
@@ -93,18 +49,9 @@ Resources:
           - ErrorCode: 404
             ResponseCode: 200
             ResponsePagePath: /index.html
-        PriceClass: PriceClass_100
         ViewerCertificate:
           CloudFrontDefaultCertificate: true
-        HttpVersion: http2
-        IPV6Enabled: true
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
 
-  # Bucket Policy for CloudFront Access
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -123,25 +70,7 @@ Resources:
 
 Outputs:
   CloudFrontDistributionId:
-    Description: CloudFront Distribution ID
     Value: !Ref CloudFrontDistribution
-    Export:
-      Name: !Sub '${ProjectName}-cloudfront-id-${Environment}'
-
-  CloudFrontDomainName:
-    Description: CloudFront Distribution Domain Name
-    Value: !GetAtt CloudFrontDistribution.DomainName
-    Export:
-      Name: !Sub '${ProjectName}-cloudfront-domain-${Environment}'
 
   CloudFrontURL:
-    Description: CloudFront Distribution URL
     Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
-    Export:
-      Name: !Sub '${ProjectName}-cloudfront-url-${Environment}'
-
-  FrontendBucketName:
-    Description: S3 bucket for frontend assets
-    Value: !Ref FrontendBucketName
-    Export:
-      Name: !Sub '${ProjectName}-frontend-bucket-${Environment}'
