@@ -39,8 +39,6 @@ Resources:
         Origins:
           - Id: S3Origin
             DomainName: !Sub '${FrontendBucketName}.s3.${AWS::Region}.amazonaws.com'
-            S3OriginConfig:
-              OriginAccessIdentity: ''
             OriginAccessControlId: !GetAtt OriginAccessControl.Id
         Enabled: true
         DefaultRootObject: index.html
